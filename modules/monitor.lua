@@ -1,158 +1,127 @@
--- modules/monitor.lua — robust monitor handler for local + wired modem monitors
--- config.monitor:
---   side = "auto" | <side> | <remote name>
---   text_scale = number | nil
-local log = require("libs.log")
+-- modules/monitors.lua
+-- Headless monitor discovery (local + wired). Keeps a live set and a "primary".
+-- config.monitors:
+--   prefer = { "monitor_0", "left" }   -- optional priority list
+--   text_scale = nil|number            -- default scale to apply when (re)binding
+
 local M = {}
 
-local desiredSide   -- from config ("auto" or specific)
-local customScale   -- numeric or nil
-local mon           -- wrapped monitor peripheral
-local monName       -- name of current monitor (side or remote id)
-local running = false
+-- gentle logger (works even if libs/log.lua is missing)
+local log = (function()
+  local ok, m = pcall(require, "libs.log")
+  if ok then return m end
+  return { info=print, warn=printError, error=printError }
+end)()
 
--- ---------- helpers ----------
-local function centerWrite(api, y, text)
-  local w = select(1, api.getSize())
-  local x = math.max(1, math.floor((w - #text) / 2) + 1)
-  api.setCursorPos(x, y)
-  api.write(text)
-end
+local prefer = {}
+local text_scale
+local set = {}         -- name -> true
+local primaryName      -- current chosen name
+local primaryObj       -- wrapped peripheral
 
-local function draw()
-  if not mon then return end
-  local w, h = mon.getSize()
-  mon.clear()
-  centerWrite(mon, 1, "== GreyCraft ==")
-  centerWrite(mon, math.max(3, math.floor(h/2)-1), "Modular CC:Tweaked")
-  centerWrite(mon, math.max(4, math.floor(h/2)+1), "Status: RUNNING")
-  centerWrite(mon, h, ("[%s  %dx%d]"):format(monName or "?", w, h))
-end
-
-local function setScaleForSize()
-  if not mon then return end
-  if customScale then mon.setTextScale(customScale); return end
-  local w, h = mon.getSize()
-  local s
-  if w >= 60 and h >= 20 then s = 1
-  elseif w >= 40 and h >= 14 then s = 1.5
-  elseif w >= 30 and h >= 10 then s = 2
-  else s = 2.5 end
-  mon.setTextScale(s)
-end
-
-local function wrapMonitor(name)
-  if not peripheral.isPresent(name) or peripheral.getType(name) ~= "monitor" then
-    return false, "not a monitor"
+local function listMonitors()
+  local names = {}
+  if peripheral.getNames then
+    for _, n in ipairs(peripheral.getNames()) do
+      if peripheral.getType(n) == "monitor" then table.insert(names, n) end
+    end
   end
-  local wrapped = peripheral.wrap(name)
-  if not wrapped then return false, "wrap failed" end
-  mon = wrapped
-  monName = name
-  setScaleForSize()
-  local w, h = mon.getSize()
-  local kind = (name:match("^monitor_%d+$") and "wired") or "local"
-  log.info("Monitor attached (%s): %s [%dx%d]", kind, name, w, h)
-  draw()
+  return names
+end
+
+local function wrap(name)
+  if not name then return nil end
+  if not peripheral.isPresent(name) then return nil end
+  if peripheral.getType(name) ~= "monitor" then return nil end
+  return peripheral.wrap(name)
+end
+
+local function pickPrimary()
+  -- 1) honor prefer list
+  for _, n in ipairs(prefer) do
+    if set[n] then return n end
+  end
+  -- 2) otherwise first available by name
+  for n,_ in pairs(set) do return n end
+  return nil
+end
+
+local function applyScale(obj)
+  if not obj then return end
+  if text_scale then obj.setTextScale(text_scale); return end
+  -- fallback heuristic
+  local w = select(1, obj.getSize())
+  if w >= 60 then obj.setTextScale(1)
+  elseif w >= 40 then obj.setTextScale(1.5)
+  elseif w >= 30 then obj.setTextScale(2)
+  else obj.setTextScale(2.5) end
+end
+
+local function rebindPrimary()
+  local newName = pickPrimary()
+  if newName ~= primaryName then
+    primaryName = newName
+    primaryObj  = wrap(newName)
+    if primaryObj then
+      applyScale(primaryObj)
+      local kind = (newName and newName:match("^monitor_%d+$")) and "wired" or "local"
+      log.info(("[monitors] bound %s monitor: %s"):format(kind, tostring(newName)))
+    else
+      log.warn("[monitors] no monitor bound")
+    end
+  else
+    -- same name; ensure object still valid
+    if primaryName and not primaryObj then
+      primaryObj = wrap(primaryName)
+      if primaryObj then applyScale(primaryObj) end
+    end
+  end
+end
+
+-- public API
+function M.get()         return primaryObj end
+function M.getName()     return primaryName end
+function M.all()         local t={} for n,_ in pairs(set) do table.insert(t,n) end return t end
+function M.setPreferred(names)
+  prefer = names or {}
+  rebindPrimary()
+end
+
+-- lifecycle
+function M.init(cfg)
+  cfg = cfg or {}
+  prefer     = cfg.prefer or prefer
+  text_scale = cfg.text_scale
+
+  -- seed set from current peripherals
+  for _, n in ipairs(listMonitors()) do set[n] = true end
+  rebindPrimary()
   return true
 end
 
-local function findAnyMonitor()
-  -- search all visible peripherals (includes wired)
-  for _, name in ipairs(peripheral.getNames()) do
-    if peripheral.getType(name) == "monitor" then
-      local ok = select(1, wrapMonitor(name))
-      if ok then return true end
-    end
-  end
-  -- fallback using peripheral.find (returns first monitor)
-  local name, obj = peripheral.find("monitor")
-  if obj then
-    mon = obj
-    monName = peripheral.getName and peripheral.getName(obj) or "unknown"
-    setScaleForSize()
-    log.info("Monitor attached (wired find): %s", monName)
-    draw()
-    return true
-  end
-  return false
-end
+function M.start() end
+function M.stop()  end
 
-local function ensureMonitor()
-  if mon and monName and peripheral.isPresent(monName)
-     and peripheral.getType(monName) == "monitor" then
-    return true
-  end
-  if desiredSide and desiredSide ~= "auto" then
-    local ok = select(1, wrapMonitor(desiredSide))
-    if ok then return true end
-  end
-  if findAnyMonitor() then return true end
-  mon, monName = nil, nil
-  return false
-end
-
--- ---------- lifecycle ----------
-function M.init(cfg)
-  cfg = cfg or {}
-  desiredSide = cfg.side or "auto"
-  customScale = cfg.text_scale
-
-  if not peripheral or not peripheral.getNames then
-    return false, "peripheral API unavailable"
-  end
-
-  if ensureMonitor() then
-    draw()
-    return true
-  else
-    log.warn("No monitor found (side=%s). Waiting for attach…", tostring(desiredSide))
-    return true
-  end
-end
-
-function M.start()
-  running = true
-  -- Run the redraw loop in its own thread
-  parallel.waitForAny(function()
-    while running do
-      if ensureMonitor() then draw() end
-      sleep(2)
-    end
-  end)
-end
-
-function M.stop()
-  running = false
-  if mon then
-    mon.clear()
-    mon.setCursorPos(1,1)
-    mon.write("Stopped.")
-  end
-end
-
--- ---------- events ----------
-function M.onEvent(ev, p1, p2, p3)
+-- events
+function M.onEvent(ev, p1)
   if ev == "peripheral" then
-    local name = p1
-    if peripheral.getType(name) == "monitor" then
-      if desiredSide == "auto" or desiredSide == name or not mon then
-        local ok, err = wrapMonitor(name)
-        if not ok then
-          log.warn("monitor attach wrap failed on %s: %s", name, tostring(err))
-        end
-      end
+    local n = p1
+    if peripheral.getType(n) == "monitor" then
+      set[n] = true
+      rebindPrimary()
     end
   elseif ev == "peripheral_detach" then
-    local name = p1
-    if name == monName then
-      log.warn("Monitor %s detached.", name)
-      mon, monName = nil, nil
+    local n = p1
+    if set[n] then
+      set[n] = nil
+      if n == primaryName then
+        primaryName, primaryObj = nil, nil
+        rebindPrimary()
+      end
     end
   elseif ev == "monitor_resize" then
-    if p1 == monName then
-      setScaleForSize()
-      draw()
+    if p1 == primaryName and primaryObj then
+      applyScale(primaryObj)
     end
   end
 end
