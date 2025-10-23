@@ -1,0 +1,9 @@
+{
+  "version": "2025-10-23",
+  "files": [
+    { "path": "loader.lua",           "url": "https://raw.githubusercontent.com/greygamer14/cc-tweaked-greycraft/main/loader.lua" },
+    { "path": "libs/log.lua",         "url": "https://raw.githubusercontent.com/greygamer14/cc-tweaked-greycraft/main/libs/log.lua" },
+    { "path": "modules/monitor.lua",  "url": "https://raw.githubusercontent.com/greygamer14/cc-tweaked-greycraft/main/modules/monitor.lua" },
+    { "path": "modules/updater.lua",  "url": "https://raw.githubusercontent.com/greygamer14/cc-tweaked-greycraft/main/modules/updater.lua" }
+  ]
+}
