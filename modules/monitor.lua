@@ -113,7 +113,8 @@ end
 
 function M.start()
   running = true
-  parallel.spawn(function()
+  -- Run the redraw loop in its own thread
+  parallel.waitForAny(function()
     while running do
       if ensureMonitor() then draw() end
       sleep(2)
