@@ -1,21 +1,22 @@
--- modules/monitor.lua — resilient monitor UI with auto-detect + hot-plug
+-- modules/monitor.lua — robust monitor handler for local + wired modem monitors
 -- config.monitor:
---   side = "auto" | "left" | "right" | "top" | "bottom" | "back" | "front" | "<wired name>"
---   text_scale = number (optional)
+--   side = "auto" | <side> | <remote name>
+--   text_scale = number | nil
 local log = require("libs.log")
 local M = {}
 
-local desiredSide   -- from config (may be "auto" or nil)
-local customScale   -- from config
-local mon           -- wrapped monitor peripheral (or nil)
-local monSide       -- the side/name we're currently bound to (or nil)
+local desiredSide   -- from config ("auto" or specific)
+local customScale   -- numeric or nil
+local mon           -- wrapped monitor peripheral
+local monName       -- name of current monitor (side or remote id)
 local running = false
 
 -- ---------- helpers ----------
 local function centerWrite(api, y, text)
-  local w, _ = api.getSize()
+  local w = select(1, api.getSize())
   local x = math.max(1, math.floor((w - #text) / 2) + 1)
-  api.setCursorPos(x, y); api.write(text)
+  api.setCursorPos(x, y)
+  api.write(text)
 end
 
 local function draw()
@@ -25,66 +26,69 @@ local function draw()
   centerWrite(mon, 1, "== GreyCraft ==")
   centerWrite(mon, math.max(3, math.floor(h/2)-1), "Modular CC:Tweaked")
   centerWrite(mon, math.max(4, math.floor(h/2)+1), "Status: RUNNING")
-  centerWrite(mon, h, ("[%s  %dx%d]"):format(monSide or "?", w, h))
+  centerWrite(mon, h, ("[%s  %dx%d]"):format(monName or "?", w, h))
 end
 
 local function setScaleForSize()
   if not mon then return end
-  if customScale then
-    mon.setTextScale(customScale)
-    return
-  end
-  -- Heuristic: pick something readable for typical sizes
+  if customScale then mon.setTextScale(customScale); return end
   local w, h = mon.getSize()
   local s
   if w >= 60 and h >= 20 then s = 1
   elseif w >= 40 and h >= 14 then s = 1.5
   elseif w >= 30 and h >= 10 then s = 2
-  else s = 2.5
-  end
+  else s = 2.5 end
   mon.setTextScale(s)
 end
 
-local function wrapMonitor(side)
-  if not peripheral or not side then return false, "no peripheral/side" end
-  if not peripheral.isPresent(side) then return false, "not present" end
-  if peripheral.getType(side) ~= "monitor" then return false, "not a monitor" end
-  local wrapped = peripheral.wrap(side)
+local function wrapMonitor(name)
+  if not peripheral.isPresent(name) or peripheral.getType(name) ~= "monitor" then
+    return false, "not a monitor"
+  end
+  local wrapped = peripheral.wrap(name)
   if not wrapped then return false, "wrap failed" end
   mon = wrapped
-  monSide = side
+  monName = name
   setScaleForSize()
   local w, h = mon.getSize()
-  log.info("Monitor attached on %s (%dx%d)", side, w, h)
+  local kind = (name:match("^monitor_%d+$") and "wired") or "local"
+  log.info("Monitor attached (%s): %s [%dx%d]", kind, name, w, h)
   draw()
   return true
 end
 
 local function findAnyMonitor()
-  for _, side in ipairs(peripheral.getNames()) do
-    if peripheral.getType(side) == "monitor" then
-      local ok = select(1, wrapMonitor(side))
+  -- search all visible peripherals (includes wired)
+  for _, name in ipairs(peripheral.getNames()) do
+    if peripheral.getType(name) == "monitor" then
+      local ok = select(1, wrapMonitor(name))
       if ok then return true end
     end
+  end
+  -- fallback using peripheral.find (returns first monitor)
+  local name, obj = peripheral.find("monitor")
+  if obj then
+    mon = obj
+    monName = peripheral.getName and peripheral.getName(obj) or "unknown"
+    setScaleForSize()
+    log.info("Monitor attached (wired find): %s", monName)
+    draw()
+    return true
   end
   return false
 end
 
 local function ensureMonitor()
-  -- If we already have one and it still exists, keep it.
-  if mon and monSide and peripheral.isPresent(monSide)
-     and peripheral.getType(monSide) == "monitor" then
+  if mon and monName and peripheral.isPresent(monName)
+     and peripheral.getType(monName) == "monitor" then
     return true
   end
-  -- Otherwise try to (re)acquire specifically requested side…
   if desiredSide and desiredSide ~= "auto" then
     local ok = select(1, wrapMonitor(desiredSide))
     if ok then return true end
   end
-  -- …or auto-find any monitor.
-  if peripheral and findAnyMonitor() then return true end
-  -- No monitor found.
-  mon = nil; monSide = nil
+  if findAnyMonitor() then return true end
+  mon, monName = nil, nil
   return false
 end
 
@@ -92,7 +96,7 @@ end
 function M.init(cfg)
   cfg = cfg or {}
   desiredSide = cfg.side or "auto"
-  customScale = cfg.text_scale  -- may be nil
+  customScale = cfg.text_scale
 
   if not peripheral or not peripheral.getNames then
     return false, "peripheral API unavailable"
@@ -103,13 +107,12 @@ function M.init(cfg)
     return true
   else
     log.warn("No monitor found (side=%s). Waiting for attach…", tostring(desiredSide))
-    return true  -- init succeeds; we'll hot-plug later
+    return true
   end
 end
 
 function M.start()
   running = true
-  -- Passive refresher: redraw every couple seconds if we have a monitor.
   parallel.spawn(function()
     while running do
       if ensureMonitor() then draw() end
@@ -130,25 +133,23 @@ end
 -- ---------- events ----------
 function M.onEvent(ev, p1, p2, p3)
   if ev == "peripheral" then
-    -- A peripheral appeared. If it's our desired side (or we're auto),
-    -- try to wrap it.
-    local side = p1
-    local typ  = peripheral.getType and peripheral.getType(side)
-    if typ == "monitor" then
-      if desiredSide == "auto" or desiredSide == side or not mon then
-        local ok, err = wrapMonitor(side)
-        if not ok then log.warn("monitor attach wrap failed on %s: %s", side, tostring(err)) end
+    local name = p1
+    if peripheral.getType(name) == "monitor" then
+      if desiredSide == "auto" or desiredSide == name or not mon then
+        local ok, err = wrapMonitor(name)
+        if not ok then
+          log.warn("monitor attach wrap failed on %s: %s", name, tostring(err))
+        end
       end
     end
   elseif ev == "peripheral_detach" then
-    local side = p1
-    if side == monSide then
-      log.warn("Monitor on %s detached.", side)
-      mon = nil; monSide = nil
+    local name = p1
+    if name == monName then
+      log.warn("Monitor %s detached.", name)
+      mon, monName = nil, nil
     end
   elseif ev == "monitor_resize" then
-    -- p1 is the side that resized (wired monitors also emit this)
-    if p1 == monSide then
+    if p1 == monName then
       setScaleForSize()
       draw()
     end
