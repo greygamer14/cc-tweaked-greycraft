@@ -7,6 +7,7 @@
     { "path": "modules/updater.lua",  "url": "https://raw.githubusercontent.com/greygamer14/cc-tweaked-greycraft/refs/heads/main/modules/updater.lua" },
     { "path": "modules/modem.lua",    "url": "https://raw.githubusercontent.com/greygamer14/cc-tweaked-greycraft/refs/heads/main/modules/modem.lua" },
     { "path": "scripts/doorscript.lua", "url": "https://raw.githubusercontent.com/greygamer14/cc-tweaked-greycraft/refs/heads/main/scripts/doorscript.lua" },
-    { "path": "modules/launcher.lua", "url": "https://raw.githubusercontent.com/greygamer14/cc-tweaked-greycraft/refs/heads/main/modules/launcher.lua" }
+    { "path": "modules/launcher.lua", "url": "https://raw.githubusercontent.com/greygamer14/cc-tweaked-greycraft/refs/heads/main/modules/launcher.lua" },
+    { "path": "modules/door.lua", "url": "https://raw.githubusercontent.com/greygamer14/cc-tweaked-greycraft/refs/heads/main/modules/door.lua" }
   ]
 }
