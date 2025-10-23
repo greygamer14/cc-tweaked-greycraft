@@ -1,5 +1,26 @@
 -- loader.lua — core bootstrap + event loop
 local log = require("libs.log")
+
+-- Auto-download default config.lua if missing
+shell.setDir("/")  -- ensure we’re rooted
+local CONFIG_PATH = "/config.lua"
+local CONFIG_URL  = "https://raw.githubusercontent.com/greygamer14/cc-tweaked-greycraft/main/config.lua"
+
+if not fs.exists(CONFIG_PATH) then
+  print("[GreyCraft] No config.lua found — downloading default...")
+  local h = http.get(CONFIG_URL)
+  if h then
+    local data = h.readAll(); h.close()
+    local f = fs.open(CONFIG_PATH, "w"); f.write(data); f.close()
+    print("[GreyCraft] Default config.lua installed.")
+  else
+    printError("[GreyCraft] Couldn’t download config.lua; continuing without it.")
+  end
+end
+
+local config = require("config")
+_G.config = config  -- (optional) so modules can read it from env if needed
+
 local config = require("config")
 
 local modules = {}
