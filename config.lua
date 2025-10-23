@@ -1,8 +1,8 @@
 return {
-  modules = { "monitors", "launcher", "door", "updater" },
+  modules = { "monitors", "launcher", "door", "updater" }
 
   monitors = {
-    prefer = { "monitor_0", "left" },
+    prefer = { "monitor_1", "left" },
   },
 
   launcher = {
