@@ -2,8 +2,8 @@ return {
   modules = { "monitors", "launcher", "door", "updater" }
 
   monitors = {
-    prefer = { "monitor_1", "left" },
-  },
+  prefer = { "monitor_1", "left" },
+},
 
   launcher = {
     entries = {
